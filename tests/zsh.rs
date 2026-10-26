@@ -139,6 +139,30 @@ fn replays_compdef_calls_after_compinit() {
 }
 
 #[test]
+fn compiled_completion_dump_is_used_on_next_start() {
+    let home = Home::new();
+    home.plugin("only", "_only", "#compdef only\n_message only\n");
+    home.config("plugins = [\"only\"]\n");
+    // Prints the compiled dump, whether it is up to date, the completion
+    // read from it and any temporary file left behind.
+    let check = "print -r -- $ZSH_COMPDUMP.zwc; [[ $ZSH_COMPDUMP.zwc -nt $ZSH_COMPDUMP ]] && print fresh; \
+                 print -r -- $_comps[only]; for f in $ZSH_COMPDUMP.*.zwc(N); print -r -- $f";
+    let Some(first) = home.zsh(check) else {
+        return;
+    };
+    let first = stdout(&first);
+    let lines: Vec<_> = first.lines().collect();
+    assert_eq!(lines[1..], ["fresh", "_only"], "{first}");
+    let modified = || fs::metadata(lines[0]).unwrap().modified().unwrap();
+    let compiled = modified();
+
+    // The second shell reads the compiled dump and leaves it alone.
+    let second = home.zsh(check).unwrap();
+    assert_eq!(stdout(&second), first);
+    assert_eq!(modified(), compiled);
+}
+
+#[test]
 fn missing_plugin_does_not_break_the_shell() {
     let home = Home::new();
     home.plugin("ok", "ok.plugin.zsh", "OK_LOADED=1\n");

@@ -157,6 +157,16 @@ pub fn generate(paths: &Paths, plugins: &[Plugin], fingerprint: u64) -> Result<S
     writeln!(out, "\n# completion")?;
     writeln!(out, "autoload -Uz compinit")?;
     writeln!(out, "compinit -C -d \"$ZSH_COMPDUMP\"")?;
+    // Sourcing a compiled dump is several milliseconds faster; compile it
+    // once per dump, into a temporary file renamed over the old one so that
+    // a concurrent shell never reads a partial file.
+    writeln!(
+        out,
+        "[[ $ZSH_COMPDUMP.zwc -nt $ZSH_COMPDUMP || ! -f $ZSH_COMPDUMP ]] || \
+         {{ zcompile -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP\" && \
+         zmodload -F zsh/files b:zf_mv && \
+         zf_mv -f -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP.zwc\" }}"
+    )?;
     writeln!(
         out,
         "for _zsh_tool_compdef in $_zsh_tool_compdefs; do eval \"compdef $_zsh_tool_compdef\"; done"
@@ -395,6 +405,20 @@ mod tests {
         let script = run(&fx.paths).unwrap();
         assert_eq!(script.matches("compinit -C").count(), 1);
         assert!(script.find("source ").unwrap() < script.find("compinit -C").unwrap());
+    }
+
+    #[test]
+    fn compiles_completion_dump_after_compinit() {
+        let fx = fixture();
+        let script = run(&fx.paths).unwrap();
+        assert_in_order(
+            &script,
+            &[
+                "compinit -C -d \"$ZSH_COMPDUMP\"\n".to_owned(),
+                "[[ $ZSH_COMPDUMP.zwc -nt $ZSH_COMPDUMP || ! -f $ZSH_COMPDUMP ]] || { zcompile -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP\" && ".to_owned(),
+                "zf_mv -f -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP.zwc\" }\n".to_owned(),
+            ],
+        );
     }
 
     #[test]
