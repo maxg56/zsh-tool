@@ -22,7 +22,8 @@
 #
 # Environment: RUNS (default 30) and EXPORT (markdown output, default
 # stdout) for hyperfine; PRELUDE, zsh code put at the top of every .zshrc
-# (e.g. zstyle settings). PATH, NVM_DIR and PYENV_ROOT, when set, are passed
+# (e.g. zstyle settings); ZSH_COMMAND, the command timed in `zsh -i -c`
+# (default exit). PATH, NVM_DIR and PYENV_ROOT, when set, are passed
 # to the measured shells; everything else is cleared.
 # Requires zsh and hyperfine (not needed with --check); builds zsh-tool in
 # release mode.
@@ -186,16 +187,17 @@ if [[ -n $check ]]; then
     exit $status
 fi
 
+command=${ZSH_COMMAND:-exit}
 make_home omz "$work/omz" "${plugins[@]}"
 make_home legacy "$work/zt" "${plugins[@]}"
 commands=(
-    -n "oh-my-zsh (${#plugins[@]} plugins)" "${shell_env[*]/@HOME@/$work/omz} zsh -i -c exit"
-    -n "zsh-tool legacy (${#plugins[@]} plugins)" "${shell_env[*]/@HOME@/$work/zt} zsh -i -c exit"
+    -n "oh-my-zsh (${#plugins[@]} plugins)" "${shell_env[*]/@HOME@/$work/omz} zsh -i -c '$command'"
+    -n "zsh-tool legacy (${#plugins[@]} plugins)" "${shell_env[*]/@HOME@/$work/zt} zsh -i -c '$command'"
 )
 if [[ -n $native ]]; then
     make_home native "$work/zt-native" "${plugins[@]}"
     commands+=(-n "zsh-tool native (${#plugins[@]} plugins)"
-        "${shell_env[*]/@HOME@/$work/zt-native} zsh -i -c exit")
+        "${shell_env[*]/@HOME@/$work/zt-native} zsh -i -c '$command'")
 fi
 commands+=(-n "zsh-tool init zsh (cache hit)" "env -i HOME=$work/zt ZSH=$omz $bin init zsh")
 
