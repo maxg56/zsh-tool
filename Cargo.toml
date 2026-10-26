@@ -9,7 +9,7 @@ repository = "https://github.com/maxg56/zsh-tool"
 readme = "README.md"
 keywords = ["zsh", "shell", "oh-my-zsh", "plugin-manager", "dotfiles"]
 categories = ["command-line-utilities"]
-exclude = ["/.github", "/scripts", "/packaging"]
+exclude = ["/.github", "/scripts", "/packaging", "/tests"]
 
 [dependencies]
 anyhow = "1.0.104"
