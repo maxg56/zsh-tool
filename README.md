@@ -47,9 +47,9 @@ gst = "git status"
 GIT_EXTRAS_DEBUG = "0"
 ```
 
-Les variables de tous les plugins sont exportées avant le premier `source`, puis chaque plugin définit ses alias et source ses fragments, dans l'ordre de la configuration. Un manifeste invalide n'empêche pas le shell de démarrer : le plugin est ignoré, avec un commentaire dans le script et un message (fichier et ligne) sur la sortie d'erreur. Le format complet est décrit dans [docs/PLUGIN_TOML.md](docs/PLUGIN_TOML.md) ; des portages natifs de plugins Oh My Zsh courants (`git`, `sudo`, `z`, `extract`, `colored-man-pages`) sont publiés dans le dépôt `maxg56/zsh-tool-plugins`, à copier dans `~/.local/share/zsh-tool/plugins`.
+Les variables de tous les plugins sont exportées avant le premier `source`, puis chaque plugin définit ses alias et source ses fragments, dans l'ordre de la configuration. Un manifeste invalide n'empêche pas le shell de démarrer : le plugin est ignoré, avec un commentaire dans le script et un message (fichier et ligne) sur la sortie d'erreur. Le format complet est décrit dans [docs/PLUGIN_TOML.md](docs/PLUGIN_TOML.md) ; des portages natifs des 20 plugins Oh My Zsh de référence (`git`, `sudo`, `z`, `extract`, `colored-man-pages`, `history`, `docker`, `docker-compose`, `kubectl`, `npm`, `node`, `nvm`, `python`, `pip`, `pyenv`, `fzf`, `command-not-found`, `web-search`, `copypath`, `dirhistory`) sont publiés dans le dépôt `maxg56/zsh-tool-plugins`, à copier dans `~/.local/share/zsh-tool/plugins`. Les portages `nvm` et `pyenv` chargent leur outil au premier appel (`nvm`, `node`, `npm`… ou `pyenv`, `python`, `pip`…) ; `zstyle ':omz:plugins:nvm' lazy no` (ou `':omz:plugins:pyenv'`), placé avant `eval "$(zsh-tool init zsh)"`, rétablit le chargement au démarrage.
 
-Le script est mis en cache dans `~/.cache/zsh-tool/init.zsh` et régénéré quand la configuration, un plugin ou la version de zsh-tool change. `compinit` n'est lancé qu'une fois, après l'ajout de tous les `fpath`, avec un fichier de cache dans le même dossier.
+Le script est mis en cache dans `~/.cache/zsh-tool/init.zsh` et régénéré quand la configuration, un plugin ou la version de zsh-tool change. `compinit` n'est lancé qu'une fois, après l'ajout de tous les `fpath`, avec un fichier de cache dans le même dossier, compilé par `zcompile` au premier démarrage pour être relu plus vite.
 
 | Variable | Rôle |
 | --- | --- |
@@ -66,4 +66,10 @@ cargo test                       # les tests d'intégration utilisent zsh s'il e
 ZSH_TOOL_REQUIRE_ZSH=1 cargo test  # échoue si zsh est absent (CI)
 ```
 
-Les mesures de démarrage et la façon de les reproduire sont dans [docs/MESURES.md](docs/MESURES.md).
+Les mesures de démarrage et la façon de les reproduire sont dans [docs/MESURES.md](docs/MESURES.md) :
+
+```sh
+scripts/bench.sh --native ../zsh-tool-plugins/plugins /tmp/omz           # temps, 10 plugins
+scripts/bench.sh --native ../zsh-tool-plugins/plugins --set 20 /tmp/omz  # temps, 20 plugins
+scripts/bench.sh --check --native ../zsh-tool-plugins/plugins /tmp/omz   # chargement sans erreur, X/20
+```
