@@ -1,5 +1,7 @@
 # Format de plugin natif : `plugin.toml`
 
+[English](PLUGIN_TOML.en.md) | Français
+
 Un plugin zsh-tool est un dossier. S'il contient un fichier `plugin.toml`, c'est un plugin **natif** ; sinon, s'il contient `<nom>.plugin.zsh` (ou seulement une fonction de complétion `_<nom>`), il est chargé en mode compatibilité Oh My Zsh. Quand les deux existent dans le même dossier, `plugin.toml` est prioritaire et le fichier `*.plugin.zsh` est ignoré.
 
 Ce document décrit le format natif : ses champs, les règles de validation, ce que zsh-tool génère et dans quel ordre.
