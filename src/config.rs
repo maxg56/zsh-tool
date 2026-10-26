@@ -1,17 +1,22 @@
-//! Reading `config.toml`.
+//! Reading and editing `config.toml`.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use toml_edit::{Array, DocumentMut, Item, RawString, Value};
+
+use crate::files::write_atomic;
+use crate::plugin::{ValidName, check_name};
 
 /// The user configuration.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Plugins to load, in order.
+    /// Plugins to load, in order; every name passes [`check_name`].
+    #[serde(deserialize_with = "plugin_names")]
     pub plugins: Vec<String>,
     pub prompt: Prompt,
     pub compat: Compat,
@@ -47,6 +52,11 @@ pub enum Engine {
     Legacy,
 }
 
+fn plugin_names<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let names = Vec::<ValidName>::deserialize(deserializer)?;
+    Ok(names.into_iter().map(|name| name.0).collect())
+}
+
 /// A configuration together with the raw bytes it was parsed from.
 #[derive(Debug, Clone, Default)]
 pub struct Loaded {
@@ -76,6 +86,96 @@ impl Config {
             source: Some(source),
         })
     }
+}
+
+/// Appends `name` to `plugins` in `path`, creating the file if needed.
+/// Returns `false` when the plugin was already listed.
+pub fn add_plugin(path: &Path, name: &str) -> Result<bool> {
+    edit(path, |text| with_plugin_added(text, name))
+}
+
+/// Removes `name` from `plugins` in `path`. Returns `false` when it was not
+/// listed.
+pub fn remove_plugin(path: &Path, name: &str) -> Result<bool> {
+    edit(path, |text| with_plugin_removed(text, name))
+}
+
+fn edit(path: &Path, change: impl FnOnce(&str) -> Result<Option<String>>) -> Result<bool> {
+    let loaded = Config::load(path)?;
+    let Some(text) = change(loaded.source.as_deref().unwrap_or(""))? else {
+        return Ok(false);
+    };
+    // Never write a file that zsh-tool itself would refuse to load.
+    Config::parse(&text).context("internal error: edited configuration is invalid")?;
+    write_atomic(path, &text)?;
+    Ok(true)
+}
+
+/// Returns `text` with `name` appended to `plugins`, keeping comments and
+/// layout, or `None` when it is already listed.
+pub fn with_plugin_added(text: &str, name: &str) -> Result<Option<String>> {
+    check_name(name)?;
+    let mut doc = document(text)?;
+    let plugins = plugins_array(&mut doc)?;
+    if plugins.iter().any(|value| value.as_str() == Some(name)) {
+        return Ok(None);
+    }
+    let mut value = Value::from(name);
+    if let Some(last) = plugins.iter_mut().last() {
+        // Same line as the previous entry, or same indentation on a new line.
+        let prefix = raw(last.decor().prefix());
+        let indent = prefix
+            .rfind('\n')
+            .map_or(" ", |at| &prefix[at..])
+            .to_owned();
+        // Whatever followed the last entry (spaces, a comment) stays with
+        // it; only the final line break remains before `]`.
+        let after = raw(last.decor().suffix());
+        last.decor_mut().set_suffix("");
+        let after = after + &raw(Some(plugins.trailing()));
+        let (kept, closing) = after.split_at(after.rfind('\n').unwrap_or(after.len()));
+        value.decor_mut().set_prefix(format!("{kept}{indent}"));
+        plugins.set_trailing(closing);
+    }
+    plugins.push_formatted(value);
+    Ok(Some(doc.to_string()))
+}
+
+/// Returns `text` without `name` in `plugins`, keeping comments and layout,
+/// or `None` when it is not listed.
+pub fn with_plugin_removed(text: &str, name: &str) -> Result<Option<String>> {
+    let mut doc = document(text)?;
+    let plugins = plugins_array(&mut doc)?;
+    let Some(index) = plugins
+        .iter()
+        .position(|value| value.as_str() == Some(name))
+    else {
+        return Ok(None);
+    };
+    let removed = plugins.remove(index);
+    if index == 0
+        && let Some(first) = plugins.get_mut(0)
+    {
+        *first.decor_mut() = removed.decor().clone();
+    }
+    Ok(Some(doc.to_string()))
+}
+
+fn raw(text: Option<&RawString>) -> String {
+    text.and_then(RawString::as_str).unwrap_or("").to_owned()
+}
+
+fn document(text: &str) -> Result<DocumentMut> {
+    Config::parse(text)?;
+    Ok(text.parse()?)
+}
+
+fn plugins_array(doc: &mut DocumentMut) -> Result<&mut Array> {
+    let item = doc
+        .entry("plugins")
+        .or_insert_with(|| Item::Value(Value::Array(Array::new())));
+    item.as_array_mut()
+        .context("`plugins` must be an array of strings")
 }
 
 #[cfg(test)]
@@ -135,6 +235,101 @@ mod tests {
     fn rejects_unknown_engine() {
         let err = Config::parse("[prompt]\nengine = \"p10k\"\n").unwrap_err();
         assert!(format!("{err}").contains("line 2"), "{err}");
+    }
+
+    #[test]
+    fn rejects_invalid_plugin_names_with_line() {
+        for name in ["../etc", "a/b", "", "-x", ".x", "a b"] {
+            let text = format!("plugins = [\n  \"git\",\n  {name:?},\n]\n");
+            let err = format!("{:#}", Config::parse(&text).unwrap_err());
+            assert!(
+                err.contains("invalid plugin name") && err.contains("line 3"),
+                "{name:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn adds_plugin_keeping_comments() {
+        let text = "# my config\nplugins = [\"git\"] # main\n\n[prompt]\nengine = \"none\"\n";
+        let edited = with_plugin_added(text, "sudo").unwrap().unwrap();
+        assert_eq!(
+            edited,
+            "# my config\nplugins = [\"git\", \"sudo\"] # main\n\n[prompt]\nengine = \"none\"\n"
+        );
+        assert_eq!(with_plugin_added(&edited, "sudo").unwrap(), None);
+    }
+
+    #[test]
+    fn adds_plugin_to_multiline_array() {
+        let text = "plugins = [\n    \"git\", # vcs\n    \"sudo\",\n]\n";
+        let edited = with_plugin_added(text, "z").unwrap().unwrap();
+        assert_eq!(
+            edited,
+            "plugins = [\n    \"git\", # vcs\n    \"sudo\",\n    \"z\",\n]\n"
+        );
+    }
+
+    #[test]
+    fn adds_plugin_after_trailing_comment() {
+        let text = "plugins = [\n  \"git\", # vcs\n]\n";
+        assert_eq!(
+            with_plugin_added(text, "z").unwrap().unwrap(),
+            "plugins = [\n  \"git\", # vcs\n  \"z\",\n]\n"
+        );
+        let text = "plugins = [\n  \"git\" # vcs\n]\n";
+        let edited = with_plugin_added(text, "z").unwrap().unwrap();
+        assert_eq!(edited, "plugins = [\n  \"git\", # vcs\n  \"z\"\n]\n");
+        assert_eq!(
+            with_plugin_added("plugins = []\n", "z").unwrap().unwrap(),
+            "plugins = [\"z\"]\n"
+        );
+    }
+
+    #[test]
+    fn adds_plugins_key_when_missing() {
+        let edited = with_plugin_added("", "git").unwrap().unwrap();
+        assert_eq!(Config::parse(&edited).unwrap().plugins, ["git"]);
+        let edited = with_plugin_added("[prompt]\nengine = \"starship\"\n", "git")
+            .unwrap()
+            .unwrap();
+        let config = Config::parse(&edited).unwrap();
+        assert_eq!(config.plugins, ["git"]);
+        assert_eq!(config.prompt.engine, Engine::Starship);
+    }
+
+    #[test]
+    fn add_refuses_invalid_input() {
+        assert!(with_plugin_added("", "../x").is_err());
+        let err = with_plugin_added("plugins = [\n", "git").unwrap_err();
+        assert!(format!("{err}").contains("line"), "{err}");
+    }
+
+    #[test]
+    fn removes_plugin_keeping_layout() {
+        let text = "plugins = [\"git\", \"sudo\", \"z\"] # list\n";
+        assert_eq!(
+            with_plugin_removed(text, "git").unwrap().unwrap(),
+            "plugins = [\"sudo\", \"z\"] # list\n"
+        );
+        assert_eq!(
+            with_plugin_removed(text, "sudo").unwrap().unwrap(),
+            "plugins = [\"git\", \"z\"] # list\n"
+        );
+        assert_eq!(with_plugin_removed(text, "nope").unwrap(), None);
+        assert_eq!(with_plugin_removed("", "git").unwrap(), None);
+    }
+
+    #[test]
+    fn edits_file_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub/config.toml");
+        assert!(add_plugin(&path, "git").unwrap());
+        assert!(!add_plugin(&path, "git").unwrap());
+        assert!(add_plugin(&path, "sudo").unwrap());
+        assert!(remove_plugin(&path, "git").unwrap());
+        assert!(!remove_plugin(&path, "git").unwrap());
+        assert_eq!(Config::load(&path).unwrap().config.plugins, ["sudo"]);
     }
 
     #[test]

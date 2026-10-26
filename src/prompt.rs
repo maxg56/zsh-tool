@@ -66,10 +66,10 @@ impl Resolved {
         }
         writeln!(out, "\n# prompt helpers (Oh My Zsh theme API)")?;
         out.push_str(THEME_API);
-        if let Self::Theme { file, .. } = self {
-            if uses_spectrum(file) {
-                out.push_str(SPECTRUM);
-            }
+        if let Self::Theme { file, .. } = self
+            && uses_spectrum(file)
+        {
+            out.push_str(SPECTRUM);
         }
         Ok(())
     }

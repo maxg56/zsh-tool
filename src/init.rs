@@ -466,10 +466,27 @@ mod tests {
     }
 
     #[test]
-    fn keeps_odd_names_inside_comments() {
+    fn rejects_invalid_plugin_names() {
         let fx = fixture();
         write_config(&fx.paths, "plugins = [\"a\\nrm -rf ~\"]\n");
-        let script = run(&fx.paths).unwrap();
+        let err = format!("{:#}", run(&fx.paths).unwrap_err());
+        assert!(err.contains("invalid plugin name"), "{err}");
+    }
+
+    #[test]
+    fn keeps_odd_names_inside_comments() {
+        // Configured names are validated; this guards the script anyway.
+        let fx = fixture();
+        let plugin = Plugin {
+            name: "a\nrm -rf ~".to_owned(),
+            resolved: Resolved::NotFound,
+        };
+        let setup = Setup {
+            plugins: vec![plugin],
+            prompt: prompt::Resolved::None,
+            lib: None,
+        };
+        let script = generate(&fx.paths, &setup, 0).unwrap();
         assert!(
             script.contains("# plugin a rm -rf ~: not found"),
             "{script}"

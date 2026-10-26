@@ -1,11 +1,17 @@
 mod compat;
 mod config;
+mod doctor;
+mod files;
+mod git;
 mod init;
+mod lock;
+mod manage;
 mod manifest;
 mod migrate;
 mod paths;
 mod plugin;
 mod prompt;
+mod source;
 mod zsh;
 
 use std::io::Write;
@@ -32,6 +38,17 @@ enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Manage plugins.
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
+    /// Update the registry and every plugin installed by zsh-tool.
+    Upgrade,
+    /// Install missing plugins at the commits recorded in zsh-tool.lock.
+    Install,
+    /// Check the installation.
+    Doctor,
     /// Convert an Oh My Zsh .zshrc: write config.toml and switch the
     /// .zshrc to zsh-tool (a backup is kept).
     Migrate {
@@ -47,6 +64,27 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum PluginCommand {
+    /// Install a plugin if needed and enable it.
+    ///
+    /// SOURCE is a plugin name (already installed, or taken from the
+    /// registry), owner/repo on GitHub, an https:// URL, or an absolute
+    /// path to a local repository.
+    Add {
+        source: String,
+        /// Plugin name to use instead of the repository name.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Disable a plugin and delete it if zsh-tool installed it.
+    Remove { name: String },
+    /// List enabled plugins.
+    List,
+    /// Update plugins installed by zsh-tool (all of them by default).
+    Update { names: Vec<String> },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Shell {
     Zsh,
@@ -54,7 +92,7 @@ enum Shell {
 
 fn main() -> ExitCode {
     match run(Cli::parse()) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(err) => {
             eprintln!("zsh-tool: error: {err:#}");
             ExitCode::FAILURE
@@ -62,11 +100,32 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<ExitCode> {
+    let paths = Paths::from_env()?;
+    let stdout = &mut std::io::stdout().lock();
     match cli.command {
         Command::Init { shell: Shell::Zsh } => {
-            let script = init::run(&Paths::from_env()?)?;
-            std::io::stdout().lock().write_all(script.as_bytes())?;
+            stdout.write_all(init::run(&paths)?.as_bytes())?;
+        }
+        Command::Plugin { command } => match command {
+            PluginCommand::Add { source, name } => {
+                manage::add(&paths, &source, name.as_deref(), stdout)?;
+            }
+            PluginCommand::Remove { name } => manage::remove(&paths, &name, stdout)?,
+            PluginCommand::List => manage::list(&paths, stdout)?,
+            PluginCommand::Update { names } => manage::update(&paths, &names, stdout)?,
+        },
+        Command::Upgrade => manage::upgrade(&paths, stdout)?,
+        Command::Install => manage::install(&paths, stdout)?,
+        Command::Doctor => {
+            let checks = doctor::run(&paths);
+            stdout.write_all(doctor::render(&checks).as_bytes())?;
+            if checks
+                .iter()
+                .any(|check| check.level == doctor::Level::Error)
+            {
+                return Ok(ExitCode::FAILURE);
+            }
         }
         Command::Migrate {
             zshrc,
@@ -81,9 +140,9 @@ fn run(cli: Cli) -> Result<()> {
             migrate::run(
                 &options,
                 |name| std::env::var_os(name).map(PathBuf::from),
-                &mut std::io::stdout().lock(),
+                stdout,
             )?;
         }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
