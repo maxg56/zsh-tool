@@ -41,6 +41,27 @@ Moteurs de prompt :
 
 Avec `compat.lib = true`, les fichiers `$ZSH/lib/*.zsh` d'Oh My Zsh sont chargés avant les plugins, comme le fait Oh My Zsh.
 
+### Plugins natifs
+
+Un dossier de plugin qui contient un `plugin.toml` est un plugin natif (prioritaire sur un `*.plugin.zsh` du même dossier) : alias et variables d'environnement y sont déclarés en TOML, les fonctions restent dans des fragments zsh.
+
+```toml
+[plugin]
+name = "git-extras"          # égal au nom du dossier
+version = "0.1.0"
+description = "Alias git courants"
+init = ["init.zsh"]          # fragments sourcés dans l'ordre
+fpath = ["completions"]      # dossiers ajoutés à fpath avant compinit
+
+[aliases]
+gst = "git status"
+
+[env]
+GIT_EXTRAS_DEBUG = "0"
+```
+
+Les variables de tous les plugins sont exportées avant le premier `source`, puis chaque plugin définit ses alias et source ses fragments, dans l'ordre de la configuration. Un manifeste invalide n'empêche pas le shell de démarrer : le plugin est ignoré, avec un commentaire dans le script et un message (fichier et ligne) sur la sortie d'erreur. Le format complet est décrit dans [docs/PLUGIN_TOML.md](docs/PLUGIN_TOML.md) ; des portages natifs de plugins Oh My Zsh courants (`git`, `sudo`, `z`, `extract`, `colored-man-pages`) sont publiés dans le dépôt `maxg56/zsh-tool-plugins`, à copier dans `~/.local/share/zsh-tool/plugins`.
+
 Le script est mis en cache dans `~/.cache/zsh-tool/init.zsh` et régénéré quand la configuration, un plugin, le thème, le binaire `starship`, un fichier `lib/` chargé ou la version de zsh-tool change. `compinit` n'est lancé qu'une fois, après l'ajout de tous les `fpath`, avec un fichier de cache dans le même dossier.
 
 | Variable | Rôle |

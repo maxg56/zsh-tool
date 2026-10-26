@@ -1,6 +1,7 @@
 mod compat;
 mod config;
 mod init;
+mod manifest;
 mod migrate;
 mod paths;
 mod plugin;
