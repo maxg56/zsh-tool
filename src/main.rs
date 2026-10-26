@@ -1,4 +1,5 @@
 mod config;
+mod doctor;
 mod files;
 mod git;
 mod init;
@@ -41,6 +42,8 @@ enum Command {
     Upgrade,
     /// Install missing plugins at the commits recorded in zsh-tool.lock.
     Install,
+    /// Check the installation.
+    Doctor,
 }
 
 #[derive(Debug, Subcommand)]
@@ -96,6 +99,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
         },
         Command::Upgrade => manage::upgrade(&paths, stdout)?,
         Command::Install => manage::install(&paths, stdout)?,
+        Command::Doctor => {
+            let checks = doctor::run(&paths);
+            stdout.write_all(doctor::render(&checks).as_bytes())?;
+            if checks
+                .iter()
+                .any(|check| check.level == doctor::Level::Error)
+            {
+                return Ok(ExitCode::FAILURE);
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
