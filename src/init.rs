@@ -8,9 +8,10 @@ use std::time::UNIX_EPOCH;
 use anyhow::{Context, Result};
 
 use crate::config::{Config, Loaded};
+use crate::manifest;
 use crate::paths::Paths;
 use crate::plugin::{Plugin, Resolved};
-use crate::zsh::quote_path;
+use crate::zsh::{quote, quote_path, word};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const CACHE_FILE: &str = "init.zsh";
@@ -26,6 +27,15 @@ pub fn run(paths: &Paths) -> Result<String> {
         .iter()
         .map(|name| Plugin::resolve(name, &search_dirs))
         .collect();
+    // Reported on every start, cached or not, until the manifest is fixed.
+    for plugin in &plugins {
+        if let Resolved::InvalidManifest { error, .. } = &plugin.resolved {
+            eprintln!(
+                "zsh-tool: warning: plugin {}: invalid manifest: {error}",
+                plugin.name
+            );
+        }
+    }
     let fingerprint = fingerprint(paths, &loaded, &plugins);
 
     let cache_file = paths.cache_dir.join(CACHE_FILE);
@@ -69,11 +79,31 @@ pub fn generate(paths: &Paths, plugins: &[Plugin], fingerprint: u64) -> Result<S
         "[[ -d $ZSH_CACHE_DIR/completions ]] || mkdir -p -- \"$ZSH_CACHE_DIR/completions\""
     )?;
 
+    // Native plugins' variables come before any plugin code runs.
+    let natives = || {
+        plugins.iter().filter_map(|plugin| match &plugin.resolved {
+            Resolved::Native { manifest, .. } => Some(manifest),
+            _ => None,
+        })
+    };
+    if natives().any(|manifest| !manifest.env.is_empty()) {
+        writeln!(out, "\n# environment")?;
+        for (name, value) in natives().flat_map(|manifest| &manifest.env) {
+            writeln!(out, "export {name}={}", quote(value))?;
+        }
+    }
+
     writeln!(out, "\n# fpath")?;
     let mut fpath = Vec::new();
     for plugin in plugins {
-        if let Resolved::Legacy { dir, .. } = &plugin.resolved {
-            fpath.push(quote_path(dir)?);
+        match &plugin.resolved {
+            Resolved::Legacy { dir, .. } => fpath.push(quote_path(dir)?),
+            Resolved::Native { manifest, .. } => {
+                for dir in &manifest.fpath {
+                    fpath.push(quote_path(dir)?);
+                }
+            }
+            Resolved::InvalidManifest { .. } | Resolved::NotFound => {}
         }
     }
     fpath.push("\"$ZSH_CACHE_DIR/completions\"".to_owned());
@@ -91,11 +121,28 @@ pub fn generate(paths: &Paths, plugins: &[Plugin], fingerprint: u64) -> Result<S
     )?;
     for plugin in plugins {
         match &plugin.resolved {
+            Resolved::Native { manifest, .. } => {
+                writeln!(out, "{}", header(plugin))?;
+                for (name, value) in &manifest.aliases {
+                    writeln!(out, "alias -- {}={}", word(name), quote(value))?;
+                }
+                for file in &manifest.init {
+                    writeln!(out, "source {}", quote_path(file)?)?;
+                }
+            }
+            Resolved::InvalidManifest { error, .. } => {
+                writeln!(
+                    out,
+                    "# plugin {}: invalid manifest: {}",
+                    comment(&plugin.name),
+                    comment(error)
+                )?;
+            }
             Resolved::Legacy {
                 script: Some(script),
                 ..
             } => {
-                writeln!(out, "# plugin {}", plugin.name)?;
+                writeln!(out, "{}", header(plugin))?;
                 writeln!(out, "source {}", quote_path(script)?)?;
             }
             Resolved::Legacy { script: None, .. } => {
@@ -118,6 +165,23 @@ pub fn generate(paths: &Paths, plugins: &[Plugin], fingerprint: u64) -> Result<S
     Ok(out)
 }
 
+/// `# plugin <name>`, followed for native plugins by the version and
+/// description from the manifest.
+fn header(plugin: &Plugin) -> String {
+    let mut line = format!("# plugin {}", comment(&plugin.name));
+    if let Some(meta) = plugin.metadata() {
+        if let Some(version) = &meta.version {
+            line.push(' ');
+            line.push_str(&comment(version));
+        }
+        if let Some(description) = &meta.description {
+            line.push_str(": ");
+            line.push_str(&comment(description));
+        }
+    }
+    line
+}
+
 /// Keeps user-supplied text on a single comment line.
 fn comment(text: &str) -> String {
     text.replace(['\n', '\r'], " ")
@@ -129,7 +193,7 @@ fn fingerprint_line(fingerprint: u64) -> String {
 
 /// Hashes everything the generated script depends on: zsh-tool version,
 /// configuration, locations, and the location and modification time of
-/// every plugin.
+/// every plugin, including a native plugin's manifest and fragments.
 pub fn fingerprint(paths: &Paths, loaded: &Loaded, plugins: &[Plugin]) -> u64 {
     let mut hash = Fnv::new();
     hash.field(VERSION.as_bytes());
@@ -149,6 +213,20 @@ pub fn fingerprint(paths: &Paths, loaded: &Loaded, plugins: &[Plugin]) -> u64 {
                 if let Some(script) = script {
                     hash.field(&mtime(script).to_le_bytes());
                 }
+            }
+            Resolved::Native { dir, manifest } => {
+                hash.field(dir.as_os_str().as_encoded_bytes());
+                hash.field(&mtime(dir).to_le_bytes());
+                hash.field(&mtime(&dir.join(manifest::FILE)).to_le_bytes());
+                for path in manifest.init.iter().chain(&manifest.fpath) {
+                    hash.field(path.as_os_str().as_encoded_bytes());
+                    hash.field(&mtime(path).to_le_bytes());
+                }
+            }
+            Resolved::InvalidManifest { dir, error } => {
+                hash.field(dir.as_os_str().as_encoded_bytes());
+                hash.field(&mtime(&dir.join(manifest::FILE)).to_le_bytes());
+                hash.field(error.as_bytes());
             }
             Resolved::NotFound => hash.field(b"not found"),
         }
@@ -245,9 +323,32 @@ mod tests {
         dir
     }
 
+    /// Creates a native plugin in the zsh-tool directory from
+    /// `(path, body)` pairs, `plugin.toml` included.
+    fn add_native(paths: &Paths, name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = paths.data_dir.join("plugins").join(name);
+        for (path, body) in files {
+            let file = dir.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, body).unwrap();
+        }
+        dir
+    }
+
     fn write_config(paths: &Paths, text: &str) {
         fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
         fs::write(&paths.config_file, text).unwrap();
+    }
+
+    /// Asserts that `parts` appear in `script` in this order.
+    fn assert_in_order(script: &str, parts: &[String]) {
+        let mut at = 0;
+        for part in parts {
+            match script[at..].find(part.as_str()) {
+                Some(found) => at += found + part.len(),
+                None => panic!("missing {part:?} after byte {at} in\n{script}"),
+            }
+        }
     }
 
     #[test]
@@ -380,6 +481,153 @@ mod tests {
         let fx = fixture();
         write_config(&fx.paths, "plugins = [\n");
         assert!(run(&fx.paths).is_err());
+    }
+
+    #[test]
+    fn generates_native_plugins_in_order() {
+        let fx = fixture();
+        let one_toml = r#"
+            [plugin]
+            name = "one"
+            version = "1.0"
+            description = "First"
+            init = ["b.zsh", "a.zsh"]
+            fpath = ["comp"]
+
+            [aliases]
+            zz = "echo 'z'"
+            "o!" = "echo o"
+
+            [env]
+            ONE_B = "it's"
+            ONE_A = "$HOME"
+        "#;
+        let one = add_native(
+            &fx.paths,
+            "one",
+            &[
+                ("plugin.toml", one_toml),
+                ("a.zsh", ""),
+                ("b.zsh", ""),
+                ("comp/_one", ""),
+            ],
+        );
+        let legacy = add_plugin(&fx.paths, "legacy", "");
+        let two_toml = "[plugin]\nname = \"two\"\ninit = [\"init.zsh\"]\n[env]\nTWO = \"2\"\n";
+        let two = add_native(
+            &fx.paths,
+            "two",
+            &[("plugin.toml", two_toml), ("init.zsh", "")],
+        );
+        write_config(&fx.paths, "plugins = [\"one\", \"legacy\", \"two\"]\n");
+        let script = run(&fx.paths).unwrap();
+
+        assert_in_order(
+            &script,
+            &[
+                "export ZSH_CACHE_DIR=".to_owned(),
+                r"
+# environment
+export ONE_B='it'\''s'
+export ONE_A='$HOME'
+export TWO='2'
+"
+                .to_owned(),
+                format!(
+                    "fpath=('{}' '{}' \"$ZSH_CACHE_DIR/completions\" $fpath)",
+                    one.join("comp").display(),
+                    legacy.display()
+                ),
+                format!(
+                    r"# plugin one 1.0: First
+alias -- zz='echo '\''z'\'''
+alias -- 'o!'='echo o'
+source '{0}/b.zsh'
+source '{0}/a.zsh'
+",
+                    one.display()
+                ),
+                format!("source '{}/legacy.plugin.zsh'", legacy.display()),
+                format!("# plugin two\nsource '{}/init.zsh'\n", two.display()),
+                "compinit -C".to_owned(),
+            ],
+        );
+    }
+
+    #[test]
+    fn invalid_manifest_is_skipped_with_a_comment() {
+        let fx = fixture();
+        let bad_toml = "[plugin]\nname = \"bad\"\ninit = [\"init.zsh\"]\n[env]\nX = \"1\"\n";
+        add_native(&fx.paths, "bad", &[("plugin.toml", bad_toml)]);
+        let ok = add_plugin(&fx.paths, "ok", "");
+        write_config(&fx.paths, "plugins = [\"bad\", \"ok\"]\n");
+        let script = run(&fx.paths).unwrap();
+        let line = script
+            .lines()
+            .find(|line| line.starts_with("# plugin bad: invalid manifest: "))
+            .expect(&script);
+        assert!(
+            line.contains("line 3") && line.contains("init file `init.zsh` does not exist"),
+            "{line}"
+        );
+        assert!(!script.contains("export X="), "{script}");
+        assert!(script.contains(&format!("source '{}/ok.plugin.zsh'", ok.display())));
+    }
+
+    #[test]
+    fn manifest_errors_stay_on_one_comment_line() {
+        let fx = fixture();
+        add_native(&fx.paths, "bad", &[("plugin.toml", "[plugin\nname = 1\n")]);
+        write_config(&fx.paths, "plugins = [\"bad\"]\n");
+        let script = run(&fx.paths).unwrap();
+        let start = script
+            .find("# plugin bad: invalid manifest: ")
+            .expect(&script);
+        let next = script[start..].lines().nth(1).unwrap();
+        assert!(next.is_empty() || next.starts_with('#'), "{script}");
+    }
+
+    #[test]
+    fn native_changes_invalidate_cache() {
+        let fx = fixture();
+        let toml = "[plugin]\nname = \"n\"\ninit = [\"lib/init.zsh\"]\n";
+        let dir = add_native(
+            &fx.paths,
+            "n",
+            &[("plugin.toml", toml), ("lib/init.zsh", "")],
+        );
+        write_config(&fx.paths, "plugins = [\"n\"]\n");
+        let cache = fx.paths.cache_dir.join(CACHE_FILE);
+        for (secs, file) in [(1, "plugin.toml"), (2, "lib/init.zsh")] {
+            let first = run(&fx.paths).unwrap();
+            fs::write(&cache, format!("{first}# marker\n")).unwrap();
+            assert!(run(&fx.paths).unwrap().ends_with("# marker\n"));
+            let handle = fs::File::options()
+                .write(true)
+                .open(dir.join(file))
+                .unwrap();
+            handle
+                .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+            assert!(!run(&fx.paths).unwrap().contains("# marker"), "{file}");
+        }
+    }
+
+    #[test]
+    fn fixing_a_manifest_regenerates_the_script() {
+        let fx = fixture();
+        let dir = add_native(
+            &fx.paths,
+            "n",
+            &[(
+                "plugin.toml",
+                "[plugin]\nname = \"n\"\ninit = [\"init.zsh\"]\n",
+            )],
+        );
+        write_config(&fx.paths, "plugins = [\"n\"]\n");
+        assert!(run(&fx.paths).unwrap().contains("invalid manifest"));
+        fs::write(dir.join("init.zsh"), "").unwrap();
+        assert!(run(&fx.paths).unwrap().contains("source "));
     }
 
     #[test]

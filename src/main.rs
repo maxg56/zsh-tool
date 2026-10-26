@@ -1,5 +1,6 @@
 mod config;
 mod init;
+mod manifest;
 mod paths;
 mod plugin;
 mod zsh;

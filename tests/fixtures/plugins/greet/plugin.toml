@@ -1,0 +1,15 @@
+# Minimal native plugin used by tests/native.rs.
+[plugin]
+name = "greet"
+version = "0.1.0"
+description = "Test fixture: alias, function, variable and completion"
+init = ["init.zsh"]
+fpath = ["completions"]
+
+[aliases]
+hi = "greet world"
+quoted = "print -r -- 'it'\\''s' \"$GREET_WORD\""
+"hi!" = "print -r -- bang"
+
+[env]
+GREET_WORD = "Hello $(not run)"
