@@ -35,6 +35,11 @@ pub fn quote_path(path: &Path) -> Result<String> {
         .ok_or_else(|| anyhow!("path is not valid UTF-8: {}", path.display()))
 }
 
+/// Keeps arbitrary text on a single comment line.
+pub fn comment(text: &str) -> String {
+    text.replace(['\n', '\r'], " ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +57,11 @@ mod tests {
     #[test]
     fn escapes_single_quotes() {
         assert_eq!(quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn comment_stays_on_one_line() {
+        assert_eq!(comment("a\nrm -rf ~\r"), "a rm -rf ~ ");
     }
 
     #[test]

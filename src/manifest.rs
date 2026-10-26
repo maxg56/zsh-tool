@@ -10,6 +10,8 @@ use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 use toml::Spanned;
 
+use crate::plugin;
+
 /// File name that marks a directory as a native plugin.
 pub const FILE: &str = "plugin.toml";
 
@@ -132,14 +134,12 @@ fn line_of(text: &str, offset: usize) -> usize {
 
 fn check_name(name: &Spanned<String>, dir: &Path) -> Result<(), Invalid> {
     let value = name.get_ref();
-    if value.is_empty()
-        || !value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-    {
+    if !plugin::valid_name(value) {
         return Err(Invalid::at(
             name,
-            format!("invalid plugin name `{value}`: use only letters, digits, `.`, `_` and `-`"),
+            format!(
+                "invalid plugin name `{value}`: use only letters, digits, `.`, `_` and `-`, without `..`"
+            ),
         ));
     }
     let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");

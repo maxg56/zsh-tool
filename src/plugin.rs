@@ -75,6 +75,16 @@ fn native(dir: &Path) -> Option<Resolved> {
     })
 }
 
+/// Whether `name` is safe as a plugin or theme name: ASCII letters,
+/// digits, `.`, `_` and `-` only, and no `..`.
+pub fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// Recognises a plugin directory the way Oh My Zsh does: it must contain
 /// `<name>.plugin.zsh` or a completion function `_<name>`.
 fn legacy(dir: &Path, name: &str) -> Option<Resolved> {
@@ -201,6 +211,16 @@ mod tests {
                 script: None,
             }
         );
+    }
+
+    #[test]
+    fn validates_names() {
+        for name in ["git", "colored-man-pages", "zsh_z", "v1.2"] {
+            assert!(valid_name(name), "{name}");
+        }
+        for name in ["", "..", "a..b", "a/b", "$x", "a b", "é"] {
+            assert!(!valid_name(name), "{name}");
+        }
     }
 
     #[test]
