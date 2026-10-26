@@ -102,6 +102,9 @@ pub fn generate(paths: &Paths, setup: &Setup, fingerprint: u64) -> Result<String
         out,
         "[[ -d $ZSH_CACHE_DIR/completions ]] || mkdir -p -- \"$ZSH_CACHE_DIR/completions\""
     )?;
+    // Oh My Zsh plugins such as docker call is-at-least, which its lib/
+    // makes available; autoloading it costs nothing until it is used.
+    writeln!(out, "autoload -Uz is-at-least")?;
 
     // Native plugins' variables come before any plugin code runs.
     let natives = || {
@@ -195,6 +198,16 @@ pub fn generate(paths: &Paths, setup: &Setup, fingerprint: u64) -> Result<String
     writeln!(out, "\n# completion")?;
     writeln!(out, "autoload -Uz compinit")?;
     writeln!(out, "compinit -C -d \"$ZSH_COMPDUMP\"")?;
+    // Sourcing a compiled dump is several milliseconds faster; compile it
+    // once per dump, into a temporary file renamed over the old one so that
+    // a concurrent shell never reads a partial file.
+    writeln!(
+        out,
+        "[[ $ZSH_COMPDUMP.zwc -nt $ZSH_COMPDUMP || ! -f $ZSH_COMPDUMP ]] || \
+         {{ zcompile -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP\" && \
+         zmodload -F zsh/files b:zf_mv && \
+         zf_mv -f -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP.zwc\" }}"
+    )?;
     writeln!(
         out,
         "for _zsh_tool_compdef in $_zsh_tool_compdefs; do eval \"compdef $_zsh_tool_compdef\"; done"
@@ -448,6 +461,16 @@ mod tests {
     }
 
     #[test]
+    fn autoloads_is_at_least_before_plugins() {
+        let fx = fixture();
+        add_plugin(&fx.paths, "git", "");
+        write_config(&fx.paths, "plugins = [\"git\"]\n");
+        let script = run(&fx.paths).unwrap();
+        let at = script.find("autoload -Uz is-at-least\n").expect(&script);
+        assert!(at < script.find("source ").unwrap(), "{script}");
+    }
+
+    #[test]
     fn runs_compinit_once_after_plugins() {
         let fx = fixture();
         add_plugin(&fx.paths, "git", "");
@@ -455,6 +478,20 @@ mod tests {
         let script = run(&fx.paths).unwrap();
         assert_eq!(script.matches("compinit -C").count(), 1);
         assert!(script.find("source ").unwrap() < script.find("compinit -C").unwrap());
+    }
+
+    #[test]
+    fn compiles_completion_dump_after_compinit() {
+        let fx = fixture();
+        let script = run(&fx.paths).unwrap();
+        assert_in_order(
+            &script,
+            &[
+                "compinit -C -d \"$ZSH_COMPDUMP\"\n".to_owned(),
+                "[[ $ZSH_COMPDUMP.zwc -nt $ZSH_COMPDUMP || ! -f $ZSH_COMPDUMP ]] || { zcompile -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP\" && ".to_owned(),
+                "zf_mv -f -- \"$ZSH_COMPDUMP.$$.zwc\" \"$ZSH_COMPDUMP.zwc\" }\n".to_owned(),
+            ],
+        );
     }
 
     #[test]
