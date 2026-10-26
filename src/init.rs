@@ -102,6 +102,9 @@ pub fn generate(paths: &Paths, setup: &Setup, fingerprint: u64) -> Result<String
         out,
         "[[ -d $ZSH_CACHE_DIR/completions ]] || mkdir -p -- \"$ZSH_CACHE_DIR/completions\""
     )?;
+    // Oh My Zsh plugins such as docker call is-at-least, which its lib/
+    // makes available; autoloading it costs nothing until it is used.
+    writeln!(out, "autoload -Uz is-at-least")?;
 
     // Native plugins' variables come before any plugin code runs.
     let natives = || {
@@ -455,6 +458,16 @@ mod tests {
         assert!(script.contains("export ZSH_CUSTOM="));
         assert!(script.contains("export ZSH_CACHE_DIR="));
         assert!(zsh_at < script.find("source ").unwrap());
+    }
+
+    #[test]
+    fn autoloads_is_at_least_before_plugins() {
+        let fx = fixture();
+        add_plugin(&fx.paths, "git", "");
+        write_config(&fx.paths, "plugins = [\"git\"]\n");
+        let script = run(&fx.paths).unwrap();
+        let at = script.find("autoload -Uz is-at-least\n").expect(&script);
+        assert!(at < script.find("source ").unwrap(), "{script}");
     }
 
     #[test]

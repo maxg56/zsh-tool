@@ -211,3 +211,18 @@ fn invalid_configuration_reports_line_and_fails() {
         "{stderr}"
     );
 }
+
+#[test]
+fn legacy_plugins_can_call_is_at_least() {
+    let home = Home::new();
+    home.plugin(
+        "vercheck",
+        "vercheck.plugin.zsh",
+        "is-at-least 5.0 && VERCHECK=ok\n",
+    );
+    home.config("plugins = [\"vercheck\"]\n");
+    let Some(output) = home.zsh("print -r -- ${VERCHECK:-missing}") else {
+        return;
+    };
+    assert_eq!(stdout(&output), "ok\n");
+}

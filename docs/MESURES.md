@@ -7,7 +7,7 @@ Rapport du jalon J5 : temps de démarrage sous Oh My Zsh et sous zsh-tool (plugi
 | Objectif | Cible | Résultat | |
 | --- | --- | --- | --- |
 | O1 : démarrage avec 10 plugins | ≤ 100 ms | 35,7 ± 4,7 ms (natif), 37,3 ± 4,1 ms (plugins Oh My Zsh) ; Oh My Zsh : 63,0 ± 6,7 ms | Atteint |
-| O2 : plugins de référence chargés sans erreur | ≥ 18/20 | 19/20 (natif quand il existe), 18/20 (plugins Oh My Zsh seuls) ; Oh My Zsh : 19/20 | Atteint |
+| O2 : plugins de référence chargés sans erreur | ≥ 18/20 | 19/20 (natif quand il existe), 19/20 (plugins Oh My Zsh seuls) ; Oh My Zsh : 19/20 | Atteint |
 
 Le seul plugin en échec en natif est `fzf`, qui écrit volontairement un message d'erreur quand fzf n'est pas installé, exactement comme sous Oh My Zsh (voir [Limites](#limites-connues)).
 
@@ -153,7 +153,7 @@ RUNS=50 ZSH_COMMAND='node --version' scripts/bench.sh --native $N /tmp/omz $P
 | extract | ok | ok | ok | |
 | colored-man-pages | ok | ok | ok | |
 | history | ok | ok | ok | |
-| docker | ok | **échec** | ok | voir ci-dessous |
+| docker | ok | ok | ok | voir ci-dessous |
 | kubectl | ok | ok | ok | no-op : kubectl absent |
 | npm | ok | ok | ok | |
 | python | ok | ok | ok | |
@@ -167,14 +167,14 @@ RUNS=50 ZSH_COMMAND='node --version' scripts/bench.sh --native $N /tmp/omz $P
 | web-search | ok | ok | ok | |
 | copypath | ok | ok | ok | |
 | dirhistory | ok | ok | ok | |
-| **Total** | **19/20** | **18/20** | **19/20** | |
+| **Total** | **19/20** | **19/20** | **19/20** | |
 
 En complément, avec des substituts de nvm, pyenv et fzf dans `PATH` (`NVM_DIR`, `PYENV_ROOT` et un `fzf` factice qui répond à `--version` et `--zsh`), `nvm`, `pyenv` et `fzf` se chargent sans erreur dans les trois configurations. Les vérifications fonctionnelles de chaque plugin natif (alias, fonctions, complétions, widgets, chargement paresseux) sont dans `scripts/check.sh` du dépôt de plugins.
 
 ## Limites connues
 
 - **fzf** : sans fzf installé, le plugin écrit « Cannot find fzf installation directory » sur la sortie d'erreur, sous Oh My Zsh comme en natif (préfixe `[zsh-tool]` au lieu de `[oh-my-zsh]`). C'est le comportement voulu du plugin ; il se charge sans erreur dès que fzf est installé.
-- **docker en mode legacy** : le `docker.plugin.zsh` d'Oh My Zsh appelle `is-at-least` sans le charger (`autoload`), car c'est `lib/` d'Oh My Zsh qui le fait ; zsh-tool ne charge pas `lib/` et affiche `command not found: is-at-least` quand docker est installé. Le plugin natif charge lui-même `is-at-least`. Pour le mode legacy, ajouter `autoload -Uz is-at-least` aux variables de compatibilité générées par zsh-tool corrigerait ce cas sans coût mesurable ; ce n'est pas fait dans ce jalon, qui ne modifie le code de zsh-tool que pour un goulot de performance.
+- **docker en mode legacy** : le `docker.plugin.zsh` d'Oh My Zsh appelle `is-at-least` sans le charger (`autoload`), car c'est `lib/` d'Oh My Zsh qui le fait. La première vérification affichait donc `command not found: is-at-least` en mode legacy (18/20). Le script généré fait désormais `autoload -Uz is-at-least` avec les variables de compatibilité, sans coût mesurable puisque la fonction n'est chargée qu'au premier appel : docker passe en legacy (19/20). Le plugin natif charge lui-même `is-at-least`.
 - **Fonctions de `lib/` d'Oh My Zsh** : en mode legacy, `node-docs`, `web_search` et `copypath` se chargent mais échouent à l'usage (`open_command`, `omz_urlencode`, `clipcopy` absents) ; les plugins natifs embarquent leur propre copie de ces fonctions.
 - **Chargement paresseux** : avant le premier appel d'une fonction-relais, la version de Node.js choisie par nvm n'est pas dans `PATH` (un script `#!/usr/bin/env node` lancé depuis le shell utilise le `node` du système, s'il y en a un) et le hook de pyenv-virtualenv (activation automatique) n'est pas installé ; les shims de pyenv, eux, sont dans `PATH` dès le démarrage. `lazy no` rétablit le comportement d'Oh My Zsh.
 - **Complétions générées** (docker, kubectl) : Oh My Zsh lance `compinit` avant ses plugins, zsh-tool après ; les plugins natifs enregistrent donc toujours leur complétion par `autoload` + `compdef` au lieu de compter sur le `zcompdump`.
