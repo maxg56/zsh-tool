@@ -1,0 +1,17 @@
+[package]
+name = "zsh-tool"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Fast zsh configuration manager compatible with Oh My Zsh plugins"
+license = "MIT"
+repository = "https://github.com/maxg56/zsh-tool"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
+
+[dev-dependencies]
+tempfile = "3.27.0"
