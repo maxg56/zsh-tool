@@ -56,7 +56,6 @@ class ZshTool < Formula
     end
   end
 
-  depends_on "git"
   depends_on "zsh"
 
   def install

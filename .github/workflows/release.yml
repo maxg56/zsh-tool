@@ -11,8 +11,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: Check tag against Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare versions
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: version
     strategy:
       fail-fast: true
       matrix:
