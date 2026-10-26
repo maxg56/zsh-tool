@@ -14,6 +14,15 @@ pub struct Config {
     /// Plugins to load, in order.
     pub plugins: Vec<String>,
     pub prompt: Prompt,
+    pub compat: Compat,
+}
+
+/// The `[compat]` table: Oh My Zsh compatibility switches.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Compat {
+    /// Source every `$ZSH/lib/*.zsh` file before the plugins.
+    pub lib: bool,
 }
 
 /// The `[prompt]` table.
@@ -82,12 +91,27 @@ mod tests {
             [prompt]
             engine = "legacy"
             theme = "robbyrussell"
+
+            [compat]
+            lib = true
             "#,
         )
         .unwrap();
         assert_eq!(config.plugins, ["git", "sudo"]);
         assert_eq!(config.prompt.engine, Engine::Legacy);
         assert_eq!(config.prompt.theme.as_deref(), Some("robbyrussell"));
+        assert!(config.compat.lib);
+    }
+
+    #[test]
+    fn compat_lib_is_off_by_default() {
+        assert!(!Config::parse("plugins = []\n").unwrap().compat.lib);
+    }
+
+    #[test]
+    fn rejects_non_boolean_compat_lib() {
+        let err = Config::parse("[compat]\nlib = \"yes\"\n").unwrap_err();
+        assert!(format!("{err}").contains("line 2"), "{err}");
     }
 
     #[test]

@@ -1,7 +1,9 @@
+mod compat;
 mod config;
 mod init;
 mod paths;
 mod plugin;
+mod prompt;
 mod zsh;
 
 use std::io::Write;
