@@ -2,13 +2,18 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
+
+/// Official plugin registry, overridden by `ZSH_TOOL_REGISTRY`.
+pub const DEFAULT_REGISTRY: &str = "https://github.com/maxg56/zsh-tool-plugins.git";
 
 /// Every directory and file zsh-tool reads or writes.
 #[derive(Debug, Clone)]
 pub struct Paths {
     /// `config.toml`, overridden by `ZSH_TOOL_CONFIG`.
     pub config_file: PathBuf,
+    /// `zsh-tool.lock`, next to `config.toml`.
+    pub lock_file: PathBuf,
     /// Plugins and themes managed by zsh-tool, overridden by `ZSH_TOOL_HOME`.
     pub data_dir: PathBuf,
     /// Generated init script and completion dump.
@@ -19,6 +24,10 @@ pub struct Paths {
     pub omz_custom: PathBuf,
     /// Cache directory handed to Oh My Zsh plugins (`ZSH_CACHE_DIR`).
     pub omz_cache: PathBuf,
+    /// Git URL of the plugin registry.
+    pub registry_url: String,
+    /// Directories of `PATH`, searched for external programs.
+    pub bin_dirs: Vec<PathBuf>,
 }
 
 impl Paths {
@@ -48,23 +57,43 @@ impl Paths {
             None => data_dir.join("custom"),
         });
         let omz_cache = env("ZSH_CACHE_DIR").unwrap_or_else(|| cache_dir.join("omz"));
+        let registry_url = match env("ZSH_TOOL_REGISTRY") {
+            Some(url) => url
+                .into_os_string()
+                .into_string()
+                .map_err(|url| anyhow!("ZSH_TOOL_REGISTRY is not valid UTF-8: {url:?}"))?,
+            None => DEFAULT_REGISTRY.to_owned(),
+        };
+        let bin_dirs = env("PATH")
+            .map(|path| std::env::split_paths(&path).collect())
+            .unwrap_or_default();
 
         Ok(Self {
+            lock_file: config_file.with_file_name("zsh-tool.lock"),
             config_file,
             data_dir,
             cache_dir,
             omz_dir,
             omz_custom,
             omz_cache,
+            registry_url,
+            bin_dirs,
         })
+    }
+
+    /// Plugins installed by zsh-tool.
+    pub fn managed_dir(&self) -> PathBuf {
+        self.data_dir.join("plugins")
+    }
+
+    /// Local clone of the plugin registry.
+    pub fn registry_dir(&self) -> PathBuf {
+        self.data_dir.join("registry")
     }
 
     /// Directories searched for a plugin, in resolution order.
     pub fn plugin_dirs(&self) -> Vec<PathBuf> {
-        let mut dirs = vec![
-            self.data_dir.join("plugins"),
-            self.omz_custom.join("plugins"),
-        ];
+        let mut dirs = vec![self.managed_dir(), self.omz_custom.join("plugins")];
         if let Some(omz) = &self.omz_dir {
             dirs.push(omz.join("plugins"));
         }
@@ -99,6 +128,12 @@ mod tests {
             Path::new("/home/u/.local/share/zsh-tool/custom")
         );
         assert_eq!(paths.omz_cache, Path::new("/home/u/.cache/zsh-tool/omz"));
+        assert_eq!(
+            paths.lock_file,
+            Path::new("/home/u/.config/zsh-tool/zsh-tool.lock")
+        );
+        assert_eq!(paths.registry_url, DEFAULT_REGISTRY);
+        assert!(paths.bin_dirs.is_empty());
     }
 
     #[test]
@@ -109,8 +144,14 @@ mod tests {
             ("ZSH_TOOL_HOME", Path::new("/opt/zt")),
             ("XDG_CACHE_HOME", Path::new("/var/cache")),
             ("ZSH_CUSTOM", Path::new("/custom")),
+            ("ZSH_TOOL_REGISTRY", Path::new("/srv/registry")),
+            ("PATH", Path::new("/bin:/usr/bin")),
         ]);
         assert_eq!(paths.config_file, Path::new("/etc/zt.toml"));
+        assert_eq!(paths.lock_file, Path::new("/etc/zsh-tool.lock"));
+        assert_eq!(paths.registry_url, "/srv/registry");
+        assert_eq!(paths.bin_dirs, [Path::new("/bin"), Path::new("/usr/bin")]);
+        assert_eq!(paths.registry_dir(), Path::new("/opt/zt/registry"));
         assert_eq!(paths.data_dir, Path::new("/opt/zt"));
         assert_eq!(paths.cache_dir, Path::new("/var/cache/zsh-tool"));
         assert_eq!(paths.omz_custom, Path::new("/custom"));

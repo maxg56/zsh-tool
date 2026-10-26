@@ -1,4 +1,5 @@
 mod config;
+mod files;
 mod init;
 mod paths;
 mod plugin;
