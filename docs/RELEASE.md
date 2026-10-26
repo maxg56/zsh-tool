@@ -26,11 +26,11 @@ Lancée par le push d'un tag `v*`. Elle ne lance pas les tests : c'est la CI de 
 
    Pour chaque cible : `cargo build --release --locked --target <cible>` (avec `musl-tools` sous Linux), puis, sous Linux, vérification avec `file` que le binaire est statique (`statically linked` ou `static-pie linked`) ; le job échoue sinon. Le binaire, `LICENSE` et `README.md` sont placés dans un dossier `zsh-tool-<tag>-<cible>/`, archivé en `zsh-tool-<tag>-<cible>.tar.gz`, avec sa somme `zsh-tool-<tag>-<cible>.tar.gz.sha256` (`shasum -a 256`). `fail-fast` est activé : une cible en échec annule les autres.
 
-2. Job **Publish GitHub release**, après les quatre builds : il récupère les archives et les sommes, génère la formule Homebrew `zsh-tool.rb` avec `packaging/homebrew/generate.sh <tag> dist` (une URL et une somme SHA-256 par plateforme, dépendances `git` et `zsh`, test `zsh-tool --version` et `zsh-tool init zsh`), puis crée la release avec `gh release create <tag> dist/* --title <tag> --generate-notes --verify-tag`. Les notes sont générées par GitHub à partir des pull requests fusionnées depuis le tag précédent.
+2. Job **Publish GitHub release**, après les quatre builds : il récupère les archives et les sommes, génère la formule Homebrew `zsh-tool.rb` avec `packaging/homebrew/generate.sh <tag> dist` (une URL et une somme SHA-256 par plateforme, dépendance `zsh`, test `zsh-tool --version` et `zsh-tool init zsh`), puis crée la release avec `gh release create <tag> dist/* --title <tag> --generate-notes --verify-tag`. Les notes sont générées par GitHub à partir des pull requests fusionnées depuis le tag précédent.
 
 La release contient donc 9 fichiers : 4 archives, 4 sommes SHA-256 et `zsh-tool.rb`.
 
-Le workflow ne vérifie pas que le tag correspond à la version de `Cargo.toml`, et ne publie rien sur crates.io : ces deux points sont à la charge du mainteneur.
+Un premier job, **Check tag against Cargo.toml**, arrête le workflow si le tag n'est pas exactement `v` suivi de la version de `Cargo.toml`. Le workflow ne publie rien sur crates.io : c'est à la charge du mainteneur, après une release réussie.
 
 ## Procédure
 
@@ -57,21 +57,9 @@ ZSH_TOOL_REQUIRE_ZSH=1 cargo test
 
 Mettre à jour les exemples d'installation de `README.md` et `README.fr.md` (`version=vX.Y.Z`, URL de `zsh-tool.rb`), puis committer `Cargo.toml`, `Cargo.lock` et les README dans une pull request vers `main`, et attendre que la CI soit verte après fusion. Pour la première version, `0.1.0` est déjà en place.
 
-### 3. Publier sur crates.io
+### 3. Pousser le tag
 
-Une version publiée sur crates.io ne peut plus être remplacée (seulement retirée avec `cargo yank`) : toujours faire un essai d'abord. Il faut un jeton crates.io (`cargo login`) et un dépôt local propre, sur le commit de `main` à publier.
-
-```sh
-cargo package --list          # fichiers envoyés : sources, README.md, LICENSE, docs
-cargo publish --dry-run       # construit le paquet et le compile, sans rien envoyer
-cargo publish
-```
-
-Le paquet exclut `.github`, `scripts`, `packaging` et `tests` (voir `exclude` dans `Cargo.toml`) : les tests ne sont pas lancés depuis crates.io et leurs fixtures contiennent une copie partielle d'Oh My Zsh.
-
-### 4. Pousser le tag
-
-Sur le même commit que celui publié sur crates.io :
+Sur le commit de `main` à publier :
 
 ```sh
 git tag -a v0.1.0 -m "zsh-tool 0.1.0"
@@ -79,7 +67,7 @@ git push origin v0.1.0
 gh run watch "$(gh run list --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-Le tag doit commencer par `v` et correspondre exactement à la version de `Cargo.toml` (`v0.1.0` pour `0.1.0`) : c'est lui qui donne son nom aux archives et sa version à la formule.
+Le tag doit commencer par `v` et correspondre exactement à la version de `Cargo.toml` (`v0.1.0` pour `0.1.0`) : c'est lui qui donne son nom aux archives et sa version à la formule, et le workflow refuse un tag qui ne correspond pas.
 
 Vérifier ensuite la release :
 
@@ -89,7 +77,19 @@ gh release download v0.1.0 --dir /tmp/zsh-tool-v0.1.0
 cd /tmp/zsh-tool-v0.1.0 && for f in *.sha256; do shasum -a 256 -c "$f"; done
 ```
 
-Si le workflow échoue avant la création de la release, corriger le problème sur `main`, supprimer le tag (`git push --delete origin v0.1.0`, `git tag -d v0.1.0`) et reprendre à l'étape 4 sur le nouveau commit. Si la correction touche aux sources du paquet alors que la version est déjà sur crates.io, publier plutôt une version corrective `X.Y.Z+1`.
+Si le workflow échoue avant la création de la release, corriger le problème sur `main`, supprimer le tag (`git push --delete origin v0.1.0`, `git tag -d v0.1.0`) et reprendre à l'étape 3 sur le nouveau commit. Rien n'est encore publié sur crates.io à ce stade, ce qui rend l'opération sans risque.
+
+### 4. Publier sur crates.io
+
+Seulement une fois la release GitHub réussie. Une version publiée sur crates.io ne peut plus être remplacée (seulement retirée avec `cargo yank`) : toujours faire un essai d'abord. Il faut un jeton crates.io (`cargo login`) et un dépôt local propre, sur le commit du tag (`git switch --detach vX.Y.Z`).
+
+```sh
+cargo package --list          # fichiers envoyés : sources, README.md, LICENSE, docs
+cargo publish --dry-run       # construit le paquet et le compile, sans rien envoyer
+cargo publish
+```
+
+Le paquet exclut `.github`, `scripts`, `packaging` et `tests` (voir `exclude` dans `Cargo.toml`) : les tests ne sont pas lancés depuis crates.io et leurs fixtures contiennent une copie partielle d'Oh My Zsh.
 
 ### 5. Publier la formule dans le tap Homebrew
 
@@ -128,6 +128,6 @@ Une fois le tap en place, les sections Homebrew des README peuvent indiquer `bre
 
 - [ ] CI verte sur le dernier commit de `main`
 - [ ] `version` de `Cargo.toml` et `Cargo.lock` à `X.Y.Z`, exemples des README à jour
-- [ ] `cargo publish --dry-run` puis `cargo publish`
 - [ ] Tag `vX.Y.Z` poussé, workflow Release terminé, 9 fichiers dans la release, sommes vérifiées
+- [ ] `cargo publish --dry-run` puis `cargo publish`, sur le commit du tag
 - [ ] `Formula/zsh-tool.rb` mis à jour dans `maxg56/homebrew-tap`, `brew install` et `brew test` réussis

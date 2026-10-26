@@ -90,5 +90,5 @@ mv ~/.zshrc.zsh-tool.bak ~/.zshrc
 ## Limites connues
 
 - Les fichiers `$ZSH_CUSTOM/*.zsh`, que Oh My Zsh charge après les plugins, ne sont pas chargés : les sourcer depuis le `.zshrc` si besoin.
-- Les réglages `zstyle ':omz:...'` (désactivation des alias d'un plugin, mises à jour) et la mise à jour automatique d'Oh My Zsh ne s'appliquent plus.
+- Les réglages `zstyle ':omz:...'` propres à Oh My Zsh (mises à jour, `:omz:update`) et sa mise à jour automatique ne s'appliquent plus. Les réglages lus par un plugin lui-même restent valables quand le plugin les lit encore, par exemple `zstyle ':omz:plugins:nvm' lazy` pour les plugins `nvm` et `pyenv` natifs ou Oh My Zsh ; ils doivent être placés avant `eval "$(zsh-tool init zsh)"`.
 - Seules les formes simples sont reconnues : une affectation ou un `source` par ligne. Un `plugins=(...)` construit dynamiquement, ou un `source` combiné à d'autres commandes sur la même ligne, est à adapter à la main.

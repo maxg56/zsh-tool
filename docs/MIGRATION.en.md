@@ -90,5 +90,5 @@ You can delete `~/.config/zsh-tool/config.toml` or keep it: Oh My Zsh ignores it
 ## Known limitations
 
 - The `$ZSH_CUSTOM/*.zsh` files, which Oh My Zsh loads after the plugins, are not loaded: source them from `.zshrc` if you need them.
-- `zstyle ':omz:...'` settings (turning off a plugin's aliases, updates) and Oh My Zsh's automatic updates no longer apply.
+- Oh My Zsh's own `zstyle ':omz:...'` settings (updates, `:omz:update`) and its automatic updates no longer apply. Settings read by a plugin itself still work when the plugin reads them, for example `zstyle ':omz:plugins:nvm' lazy` for the native or Oh My Zsh `nvm` and `pyenv` plugins; put them before `eval "$(zsh-tool init zsh)"`.
 - Only simple forms are recognised: one assignment or one `source` per line. A `plugins=(...)` built dynamically, or a `source` combined with other commands on the same line, has to be adapted by hand.
