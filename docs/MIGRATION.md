@@ -1,5 +1,7 @@
 # Migrer depuis Oh My Zsh
 
+[English](MIGRATION.en.md) | Français
+
 `zsh-tool migrate` convertit un `.zshrc` Oh My Zsh : il écrit `config.toml` avec les mêmes plugins et le même thème, puis remplace le chargement d'Oh My Zsh par `zsh-tool init zsh`. Les plugins et thèmes restent ceux du dossier Oh My Zsh, qu'il faut donc garder.
 
 ## En bref
