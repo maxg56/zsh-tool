@@ -1,0 +1,3 @@
+[plugin]
+name = "broken"
+init = ["missing.zsh"]

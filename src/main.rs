@@ -1,3 +1,4 @@
+mod compat;
 mod config;
 mod doctor;
 mod files;
@@ -5,12 +6,16 @@ mod git;
 mod init;
 mod lock;
 mod manage;
+mod manifest;
+mod migrate;
 mod paths;
 mod plugin;
+mod prompt;
 mod source;
 mod zsh;
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Result;
@@ -44,6 +49,19 @@ enum Command {
     Install,
     /// Check the installation.
     Doctor,
+    /// Convert an Oh My Zsh .zshrc: write config.toml and switch the
+    /// .zshrc to zsh-tool (a backup is kept).
+    Migrate {
+        /// The .zshrc to migrate [default: $ZDOTDIR/.zshrc or ~/.zshrc]
+        #[arg(long, value_name = "PATH")]
+        zshrc: Option<PathBuf>,
+        /// Print config.toml and the .zshrc changes without writing anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite an existing config.toml
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -108,6 +126,22 @@ fn run(cli: Cli) -> Result<ExitCode> {
             {
                 return Ok(ExitCode::FAILURE);
             }
+        }
+        Command::Migrate {
+            zshrc,
+            dry_run,
+            force,
+        } => {
+            let options = migrate::Options {
+                zshrc,
+                dry_run,
+                force,
+            };
+            migrate::run(
+                &options,
+                |name| std::env::var_os(name).map(PathBuf::from),
+                stdout,
+            )?;
         }
     }
     Ok(ExitCode::SUCCESS)

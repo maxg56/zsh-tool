@@ -127,7 +127,10 @@ pub fn remove(paths: &Paths, name: &str, out: &mut dyn Write) -> Result<()> {
 
 /// Where a plugin was found, as shown by `plugin list` and `doctor`.
 pub fn location(paths: &Paths, resolved: &Resolved) -> &'static str {
-    let Resolved::Legacy { dir, .. } = resolved else {
+    if let Resolved::InvalidManifest { .. } = resolved {
+        return "invalid manifest";
+    }
+    let Some(dir) = resolved.dir() else {
         return "not found";
     };
     let parent = dir.parent();

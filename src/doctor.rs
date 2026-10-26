@@ -111,13 +111,17 @@ fn check_plugins(paths: &Paths, config: &Config, report: &mut Report) {
     for name in &config.plugins {
         let plugin = Plugin::resolve(name, &search_dirs);
         match &plugin.resolved {
-            Resolved::Legacy { dir, .. } => report.add(
+            Resolved::Native { dir, .. } | Resolved::Legacy { dir, .. } => report.add(
                 Level::Ok,
                 format!(
                     "plugin {name} ({}, {})",
                     location(paths, &plugin.resolved),
                     dir.display()
                 ),
+            ),
+            Resolved::InvalidManifest { error, .. } => report.add(
+                Level::Error,
+                format!("plugin {name}: invalid manifest: {error}"),
             ),
             Resolved::NotFound => report.add(
                 Level::Error,

@@ -189,6 +189,29 @@ fn added_plugins_load_in_zsh() {
 }
 
 #[test]
+fn native_registry_plugins_load_and_are_listed() {
+    let home = Home::new();
+    home.registry.commit(&[
+        (
+            "plugins/hey/plugin.toml",
+            "[plugin]\nname = \"hey\"\ninit = [\"hey.zsh\"]\n\n[aliases]\nhey = \"echo native\"\n",
+        ),
+        ("plugins/hey/hey.zsh", "HEY_LOADED=1\n"),
+    ]);
+    home.ok(&["plugin", "add", "hey"]);
+    let list = home.ok(&["plugin", "list"]);
+    let row: Vec<&str> = list.lines().nth(1).unwrap().split_whitespace().collect();
+    assert_eq!(row[..3], ["hey", "zsh-tool", "registry"], "{list}");
+    let doctor = home.run(&["doctor"]);
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(report.contains("plugin hey (zsh-tool"), "{report}");
+    let Some(out) = home.zsh("print -r -- $aliases[hey] $HEY_LOADED") else {
+        return;
+    };
+    assert_eq!(out, "echo native 1\n");
+}
+
+#[test]
 fn add_keeps_comments_and_is_idempotent() {
     let home = Home::new();
     fs::create_dir_all(home.config_file().parent().unwrap()).unwrap();
