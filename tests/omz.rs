@@ -204,10 +204,17 @@ fn migrate(home: &Home, args: &[&str]) -> Output {
 }
 
 /// Runs `body` in an interactive zsh that reads the home's `.zshrc`.
+///
+/// Debian and Ubuntu ship an `/etc/zsh/zshrc` that runs its own `compinit`
+/// before `~/.zshrc`; its security check aborts when a system directory
+/// looks insecure, as on the GitHub Ubuntu runners. `skip_global_compinit`
+/// in `~/.zshenv` turns it off, as those systems tell their users to do, so
+/// the test sees only the `compinit` from zsh-tool.
 fn interactive(home: &Home, body: &str) -> Option<Output> {
     if !zsh_available() {
         return None;
     }
+    fs::write(home.path().join(".zshenv"), "skip_global_compinit=1\n").unwrap();
     Some(
         home.command("zsh")
             .args(["-i", "-c", body])
